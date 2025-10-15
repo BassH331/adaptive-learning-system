@@ -5,9 +5,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog.jsx'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { BookOpen, TrendingUp, Video, FileText, Brain, ExternalLink, CheckCircle, XCircle } from 'lucide-react'
+import { BookOpen, TrendingUp, Video, FileText, Brain } from 'lucide-react'
 import './App.css'
 
 const API_URL = 'https://adaptive-learning-system.onrender.com/api'
@@ -16,7 +15,7 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [token, setToken] = useState(null)
   const [user, setUser] = useState(null)
-  const [view, setView] = useState('login')
+  const [view, setView] = useState('login') // 'login', 'register', 'dashboard', 'admin'
   
   // Login/Register form states
   const [email, setEmail] = useState('')
@@ -28,13 +27,6 @@ function App() {
   const [recommendations, setRecommendations] = useState([])
   const [progress, setProgress] = useState([])
   const [courses, setCourses] = useState([])
-  
-  // Quiz states
-  const [showQuiz, setShowQuiz] = useState(false)
-  const [currentQuiz, setCurrentQuiz] = useState(null)
-  const [quizAnswers, setQuizAnswers] = useState({})
-  const [quizSubmitted, setQuizSubmitted] = useState(false)
-  const [quizScore, setQuizScore] = useState(0)
   
   // Admin states
   const [newCourseName, setNewCourseName] = useState('')
@@ -106,7 +98,8 @@ function App() {
         alert(data.message)
       }
     } catch (err) {
-      alert('Login failed: ' + err.message)
+      console.error('Login error:', err)
+      alert('Login failed')
     }
   }
 
@@ -126,7 +119,8 @@ function App() {
         alert(data.message)
       }
     } catch (err) {
-      alert('Registration failed: ' + err.message)
+      console.error('Registration error:', err)
+      alert('Registration failed')
     }
   }
 
@@ -137,66 +131,6 @@ function App() {
     setView('login')
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-  }
-
-  const handleMaterialClick = (material) => {
-    if (material.type === 'quiz') {
-      setCurrentQuiz(material)
-      setShowQuiz(true)
-      setQuizAnswers({})
-      setQuizSubmitted(false)
-      setQuizScore(0)
-    } else {
-      // Open video or PDF in new tab
-      window.open(material.content_url, '_blank')
-    }
-  }
-
-  const handleQuizAnswer = (questionIndex, answerIndex) => {
-    setQuizAnswers({
-      ...quizAnswers,
-      [questionIndex]: answerIndex
-    })
-  }
-
-  const handleQuizSubmit = async () => {
-    if (!currentQuiz || !currentQuiz.quiz_data) return
-    
-    let correct = 0
-    const questions = currentQuiz.quiz_data.questions
-    
-    questions.forEach((q, idx) => {
-      if (quizAnswers[idx] === q.correct) {
-        correct++
-      }
-    })
-    
-    const score = Math.round((correct / questions.length) * 100)
-    setQuizScore(score)
-    setQuizSubmitted(true)
-    
-    // Update progress on backend
-    try {
-      await fetch(`${API_URL}/progress`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          student_id: user.id.toString(),
-          topic_id: currentQuiz.topic_id,
-          score: score,
-          grade: score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F',
-          status: score >= 70 ? 'completed' : 'in_progress'
-        })
-      })
-      
-      // Refresh dashboard data
-      fetchDashboardData()
-    } catch (err) {
-      console.error('Error updating progress:', err)
-    }
   }
 
   const handleAddCourse = async (e) => {
@@ -211,13 +145,15 @@ function App() {
         body: JSON.stringify({ name: newCourseName, description: newCourseDesc })
       })
       if (res.ok) {
-        alert('Course added successfully!')
+        alert('Course added successfully')
         setNewCourseName('')
         setNewCourseDesc('')
         fetchDashboardData()
+      } else {
+        alert('Failed to add course')
       }
     } catch (err) {
-      alert('Failed to add course')
+      console.error('Error adding course:', err)
     }
   }
 
@@ -234,32 +170,32 @@ function App() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({
-          course_id: selectedCourse,
-          name: newTopicName,
-          description: newTopicDesc
-        })
+        body: JSON.stringify({ course_id: selectedCourse, name: newTopicName, description: newTopicDesc })
       })
       if (res.ok) {
-        alert('Topic added successfully!')
+        alert('Topic added successfully')
         setNewTopicName('')
         setNewTopicDesc('')
+      } else {
+        alert('Failed to add topic')
       }
     } catch (err) {
-      alert('Failed to add topic')
+      console.error('Error adding topic:', err)
     }
   }
 
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <div className="flex justify-center mb-4">
-              <Brain className="w-12 h-12 text-indigo-600" />
-            </div>
-            <CardTitle className="text-3xl font-bold text-gray-900">Adaptive Learning</CardTitle>
-            <CardDescription>Personalized education for every student</CardDescription>
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader>
+            <CardTitle className="text-3xl font-bold text-center flex items-center justify-center gap-2">
+              <Brain className="w-8 h-8 text-indigo-600" />
+              Adaptive Learning
+            </CardTitle>
+            <CardDescription className="text-center">
+              Personalized education for every student
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Tabs value={view} onValueChange={setView}>
@@ -332,7 +268,7 @@ function App() {
                   <div className="space-y-2">
                     <Label htmlFor="learning-style">Learning Style</Label>
                     <Select value={learningStyle} onValueChange={setLearningStyle}>
-                      <SelectTrigger>
+                      <SelectTrigger id="learning-style">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -359,7 +295,7 @@ function App() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
               <Brain className="w-8 h-8 text-indigo-600" />
-              <span className="text-xl font-bold text-gray-900">Adaptive Learning</span>
+              <h1 className="text-xl font-bold text-gray-900">Adaptive Learning</h1>
             </div>
             <div className="flex items-center gap-4">
               <span className="text-sm text-gray-700">Welcome, {user?.name}</span>
@@ -409,14 +345,9 @@ function App() {
                               <h4 className="font-semibold text-gray-900">{rec.topic}</h4>
                               <p className="text-sm text-gray-600 mt-1">{rec.reason}</p>
                               {rec.material && (
-                                <Button
-                                  variant="link"
-                                  className="text-indigo-600 p-0 h-auto mt-2"
-                                  onClick={() => handleMaterialClick(rec.material)}
-                                >
-                                  <ExternalLink className="w-4 h-4 mr-1" />
+                                <p className="text-sm text-indigo-600 mt-2 font-medium">
                                   {rec.material.title} ({rec.material.type})
-                                </Button>
+                                </p>
                               )}
                             </div>
                           </div>
@@ -474,22 +405,14 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {progress.map((p, idx) => (
-                          <tr key={idx} className="border-b hover:bg-gray-50">
+                        {progress.map((p) => (
+                          <tr key={p._id} className="border-b hover:bg-gray-50">
                             <td className="py-2 px-4">{p.course_name}</td>
                             <td className="py-2 px-4">{p.topic_name}</td>
-                            <td className="py-2 px-4">{p.score}</td>
+                            <td className="py-2 px-4">{p.score || 'N/A'}</td>
+                            <td className="py-2 px-4">{p.grade || 'N/A'}</td>
                             <td className="py-2 px-4">
-                              <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                                p.grade === 'A' || p.grade === 'B+' ? 'bg-green-100 text-green-800' :
-                                p.grade === 'B' || p.grade === 'C' ? 'bg-yellow-100 text-yellow-800' :
-                                'bg-red-100 text-red-800'
-                              }`}>
-                                {p.grade}
-                              </span>
-                            </td>
-                            <td className="py-2 px-4">
-                              <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                              <span className={`px-2 py-1 rounded text-xs font-medium ${
                                 p.status === 'completed' ? 'bg-green-100 text-green-800' :
                                 p.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
                                 'bg-gray-100 text-gray-800'
@@ -526,6 +449,7 @@ function App() {
                       <Label htmlFor="course-name">Course Name</Label>
                       <Input
                         id="course-name"
+                        type="text"
                         placeholder="e.g., Mathematics"
                         value={newCourseName}
                         onChange={(e) => setNewCourseName(e.target.value)}
@@ -536,10 +460,10 @@ function App() {
                       <Label htmlFor="course-desc">Description</Label>
                       <Input
                         id="course-desc"
+                        type="text"
                         placeholder="Course description"
                         value={newCourseDesc}
                         onChange={(e) => setNewCourseDesc(e.target.value)}
-                        required
                       />
                     </div>
                     <Button type="submit" className="w-full">Add Course</Button>
@@ -556,12 +480,12 @@ function App() {
                     <div className="space-y-2">
                       <Label htmlFor="select-course">Select Course</Label>
                       <Select value={selectedCourse} onValueChange={setSelectedCourse}>
-                        <SelectTrigger>
+                        <SelectTrigger id="select-course">
                           <SelectValue placeholder="Choose a course" />
                         </SelectTrigger>
                         <SelectContent>
                           {courses.map((course) => (
-                            <SelectItem key={course._id} value={course._id}>
+                            <SelectItem key={course._id} value={course._id.toString()}>
                               {course.name}
                             </SelectItem>
                           ))}
@@ -572,6 +496,7 @@ function App() {
                       <Label htmlFor="topic-name">Topic Name</Label>
                       <Input
                         id="topic-name"
+                        type="text"
                         placeholder="e.g., Algebra Basics"
                         value={newTopicName}
                         onChange={(e) => setNewTopicName(e.target.value)}
@@ -582,10 +507,10 @@ function App() {
                       <Label htmlFor="topic-desc">Description</Label>
                       <Input
                         id="topic-desc"
+                        type="text"
                         placeholder="Topic description"
                         value={newTopicDesc}
                         onChange={(e) => setNewTopicDesc(e.target.value)}
-                        required
                       />
                     </div>
                     <Button type="submit" className="w-full">Add Topic</Button>
@@ -599,87 +524,23 @@ function App() {
                 <CardTitle>Existing Courses</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {courses.map((course) => (
-                    <div key={course._id} className="border rounded-lg p-4">
-                      <h3 className="font-semibold text-lg">{course.name}</h3>
-                      <p className="text-sm text-gray-600">{course.description}</p>
-                    </div>
-                  ))}
-                </div>
+                {courses.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No courses available.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {courses.map((course) => (
+                      <div key={course._id} className="border rounded-lg p-4">
+                        <h4 className="font-semibold text-gray-900">{course.name}</h4>
+                        <p className="text-sm text-gray-600">{course.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         )}
       </main>
-
-      {/* Quiz Dialog */}
-      <Dialog open={showQuiz} onOpenChange={setShowQuiz}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{currentQuiz?.title}</DialogTitle>
-            <DialogDescription>
-              Answer all questions and submit to see your score
-            </DialogDescription>
-          </DialogHeader>
-          {currentQuiz && currentQuiz.quiz_data && (
-            <div className="space-y-6">
-              {currentQuiz.quiz_data.questions.map((q, qIdx) => (
-                <div key={qIdx} className="space-y-3">
-                  <p className="font-semibold">{qIdx + 1}. {q.question}</p>
-                  <div className="space-y-2">
-                    {q.options.map((option, oIdx) => (
-                      <div
-                        key={oIdx}
-                        className={`p-3 border rounded cursor-pointer transition-colors ${
-                          quizSubmitted
-                            ? oIdx === q.correct
-                              ? 'bg-green-100 border-green-500'
-                              : quizAnswers[qIdx] === oIdx
-                              ? 'bg-red-100 border-red-500'
-                              : 'bg-gray-50'
-                            : quizAnswers[qIdx] === oIdx
-                            ? 'bg-indigo-100 border-indigo-500'
-                            : 'hover:bg-gray-100'
-                        }`}
-                        onClick={() => !quizSubmitted && handleQuizAnswer(qIdx, oIdx)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span>{option}</span>
-                          {quizSubmitted && oIdx === q.correct && (
-                            <CheckCircle className="w-5 h-5 text-green-600" />
-                          )}
-                          {quizSubmitted && quizAnswers[qIdx] === oIdx && oIdx !== q.correct && (
-                            <XCircle className="w-5 h-5 text-red-600" />
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              {!quizSubmitted ? (
-                <Button onClick={handleQuizSubmit} className="w-full">
-                  Submit Quiz
-                </Button>
-              ) : (
-                <div className="text-center space-y-4">
-                  <div className="text-3xl font-bold text-indigo-600">{quizScore}%</div>
-                  <p className="text-gray-600">
-                    {quizScore >= 90 ? 'Excellent work!' :
-                     quizScore >= 70 ? 'Good job!' :
-                     quizScore >= 50 ? 'Keep practicing!' :
-                     'Review the material and try again!'}
-                  </p>
-                  <Button onClick={() => setShowQuiz(false)} className="w-full">
-                    Close
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
