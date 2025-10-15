@@ -283,86 +283,83 @@ app.get("/api/progress/:studentId", authenticateToken, async (req, res) => {
   }
 });
 
-// --- Adaptive Learning Algorithm (Simplified Heuristic) ---
+    // --- Adaptive Learning Algorithm (Enhanced Heuristic) ---
 app.get("/api/recommendations/:studentId", authenticateToken, async (req, res) => {
-  const { studentId } = req.params;
-  try {
-    const db = client.db(dbName);
-    const studentsCollection = db.collection("system_students");
-    const topicsCollection = db.collection("system_topics");
-    const progressCollection = db.collection("system_student_progress");
-    const materialsCollection = db.collection("system_study_materials");
+      const { studentId } = req.params;
+      try {
+        const db = client.db(dbName);
+        const studentsCollection = db.collection("system_students");
+        const topicsCollection = db.collection("system_topics");
+        const progressCollection = db.collection("system_student_progress");
+        const materialsCollection = db.collection("system_study_materials");
 
-    // Get student's learning style
-    const student = await studentsCollection.findOne({ _id: new ObjectId(studentId) });
-    const learningStyle = student?.learning_style || "visual"; // Default to visual
+        const studentObjectId = new ObjectId(studentId);
+        const student = await studentsCollection.findOne({ _id: studentObjectId });
+        if (!student) {
+          return res.status(404).json({ message: "Student not found" });
+        }
 
-    // Get student's progress (topics with low scores or not completed)
-    const lowScoreProgress = await progressCollection.find({
-      student_id: new ObjectId(studentId),
-      $or: [{ score: { $lt: 70 } }, { score: { $exists: false } }, { status: { $ne: "completed" } }]
-    }).sort({ score: 1 }).limit(5).toArray();
+        const learningStyle = student.learning_style || "visual"; // Default to visual
 
-    let recommendations = [];
+        const studentProgress = await progressCollection.find({ student_id: studentObjectId }).toArray();
+        const completedTopicIds = studentProgress.filter(p => p.score >= 70).map(p => p.topic_id);
+        const strugglingTopics = studentProgress.filter(p => p.score < 70);
 
-    if (lowScoreProgress.length > 0) {
-      for (const p of lowScoreProgress) {
-        const topic = await topicsCollection.findOne({ _id: p.topic_id });
-        if (!topic) continue;
+        let recommendations = [];
 
-        // Recommend materials based on learning style for low-score topics
-        const materials = await materialsCollection.find({
-          topic_id: topic._id,
-          $or: [
-            { type: learningStyle === "visual" ? "video" : "pdf" },
-            { type: learningStyle === "auditory" ? "video" : "pdf" },
-            { type: "quiz" } // Always include quizzes as a general study material
-          ]
-        }).limit(1).toArray();
+        // 1. Prioritize struggling topics with relevant materials based on learning style
+        for (const p of strugglingTopics) {
+          const topic = await topicsCollection.findOne({ _id: p.topic_id });
+          if (!topic) continue;
 
-        if (materials.length > 0) {
-          recommendations.push({
-            topic: topic.name,
-            material: materials[0],
-            reason: `Improve score in ${topic.name} (score: ${p.score || 'N/A'})`,
-          });
-        } else {
-            // Fallback if no specific learning style material is found
-            const anyMaterial = await materialsCollection.findOne({ topic_id: topic._id });
-            if (anyMaterial) {
-                recommendations.push({
-                    topic: topic.name,
-                    material: anyMaterial,
-                    reason: `Improve score in ${topic.name} (score: ${p.score || 'N/A'})`,
-                });
+          let material = null;
+          // Try to find a material that matches the student\'s learning style
+          if (learningStyle === "visual") {
+            material = await materialsCollection.findOne({ topic_id: topic._id, type: "video" });
+          } else if (learningStyle === "auditory") {
+            material = await materialsCollection.findOne({ topic_id: topic._id, type: "video" }); // Videos can be auditory
+          } else if (learningStyle === "kinesthetic") {
+            material = await materialsCollection.findOne({ topic_id: topic._id, type: "quiz" });
+          }
+
+          // Fallback to any material if style-specific not found
+          if (!material) {
+            material = await materialsCollection.findOne({ topic_id: topic._id });
+          }
+
+          if (material) {
+            recommendations.push({
+              topic: topic.name,
+              material: material,
+              reason: `Improve score in ${topic.name} (score: ${p.score}) - tailored for ${learningStyle} learners`,
+            });
+          }
+        }
+
+        // 2. If fewer than 3 recommendations, suggest new unstarted topics
+        if (recommendations.length < 3) {
+          const unstartedTopics = await topicsCollection.find({
+            _id: { $nin: completedTopicIds.concat(strugglingTopics.map(p => p.topic_id)) }
+          }).limit(3 - recommendations.length).toArray();
+
+          for (const topic of unstartedTopics) {
+            const material = await materialsCollection.findOne({ topic_id: topic._id });
+            if (material) {
+              recommendations.push({
+                topic: topic.name,
+                material: material,
+                reason: `Explore new topic: ${topic.name}`,
+              });
             }
+          }
         }
-      }
-    } else {
-      // If no low scores, recommend new topics or advanced materials
-      const completedTopicIds = lowScoreProgress.map(p => p.topic_id);
-      const newTopics = await topicsCollection.find({
-        _id: { $nin: completedTopicIds }
-      }).limit(3).toArray();
 
-      for (const topic of newTopics) {
-        const material = await materialsCollection.findOne({ topic_id: topic._id });
-        if (material) {
-          recommendations.push({
-            topic: topic.name,
-            material: material,
-            reason: `Explore new topic: ${topic.name}`,
-          });
-        }
+        res.json(recommendations);
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
       }
-    }
-
-    res.json(recommendations);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
+    });
 
 // Start server
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
