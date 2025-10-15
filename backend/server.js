@@ -197,6 +197,125 @@ app.post("/api/topics", authenticateToken, async (req, res) => {
   }
 });
 
+// --- CRUD for Quizzes ---
+app.post("/api/quizzes", authenticateToken, async (req, res) => {
+  const { topic_id, title, description, difficulty, questions } = req.body;
+  try {
+    const db = client.db(dbName);
+    const quizzesCollection = db.collection("system_quizzes");
+    const result = await quizzesCollection.insertOne({ topic_id: new ObjectId(topic_id), title, description, difficulty, questions });
+    res.status(201).json({ _id: result.insertedId, topic_id, title, description, difficulty, questions });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.get("/api/quizzes/:quizId", authenticateToken, async (req, res) => {
+  const { quizId } = req.params;
+  try {
+    const db = client.db(dbName);
+    const quizzesCollection = db.collection("system_quizzes");
+    const quiz = await quizzesCollection.findOne({ _id: new ObjectId(quizId) });
+    if (!quiz) {
+      return res.status(404).json({ message: "Quiz not found" });
+    }
+    res.json(quiz);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.post("/api/quizzes/:quizId/submit", authenticateToken, async (req, res) => {
+  const { quizId } = req.params;
+  const { answers } = req.body;
+  const student_id = req.user.id;
+
+  try {
+    const db = client.db(dbName);
+    const quizzesCollection = db.collection("system_quizzes");
+    const progressCollection = db.collection("system_student_progress");
+    const studentsCollection = db.collection("system_students");
+    const topicsCollection = db.collection("system_topics");
+
+    const quiz = await quizzesCollection.findOne({ _id: new ObjectId(quizId) });
+    if (!quiz) {
+      return res.status(404).json({ message: "Quiz not found" });
+    }
+
+    let correctAnswers = 0;
+    quiz.questions.forEach((q, index) => {
+      if (answers[index] && answers[index].toLowerCase() === q.correct_answer.toLowerCase()) {
+        correctAnswers++;
+      }
+    });
+
+    const score = (correctAnswers / quiz.questions.length) * 100;
+    const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+
+    const studentObjectId = new ObjectId(student_id);
+    const topicObjectId = quiz.topic_id;
+
+    // Update student progress
+    const existingProgress = await progressCollection.findOne({ student_id: studentObjectId, topic_id: topicObjectId });
+
+    if (existingProgress) {
+      // Add quiz attempt to existing progress
+      await progressCollection.updateOne(
+        { _id: existingProgress._id },
+        { 
+          $set: { score, grade, status: score >= 70 ? "completed" : "in_progress", last_accessed: new Date() },
+          $push: { quiz_attempts: { quiz_id: new ObjectId(quizId), score, attempted_at: new Date() } }
+        }
+      );
+    } else {
+      // Create new progress entry
+      await progressCollection.insertOne({
+        student_id: studentObjectId,
+        topic_id: topicObjectId,
+        score,
+        grade,
+        status: score >= 70 ? "completed" : "in_progress",
+        last_accessed: new Date(),
+        quiz_attempts: [{ quiz_id: new ObjectId(quizId), score, attempted_at: new Date() }]
+      });
+    }
+
+    // Update student gamification elements (points, badges)
+    let pointsEarned = Math.round(score / 10);
+    let newBadges = [];
+
+    const student = await studentsCollection.findOne({ _id: studentObjectId });
+    let currentPoints = student.points || 0;
+    let currentBadges = student.badges || [];
+
+    // Award points
+    currentPoints += pointsEarned;
+
+    // Award badges based on score or other criteria
+    if (score >= 90 && !currentBadges.includes("Quiz Master")) {
+      newBadges.push("Quiz Master");
+    }
+    if (score === 100 && !currentBadges.includes("Perfect Score")) {
+      newBadges.push("Perfect Score");
+    }
+
+    await studentsCollection.updateOne(
+      { _id: studentObjectId },
+      { 
+        $set: { points: currentPoints },
+        $addToSet: { badges: { $each: newBadges } } // Add new badges without duplicates
+      }
+    );
+
+    res.json({ score, grade, correctAnswers, totalQuestions: quiz.questions.length, pointsEarned, newBadges });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // --- CRUD for Study Materials ---
 app.get("/api/materials/:topicId", authenticateToken, async (req, res) => {
   const { topicId } = req.params;
@@ -212,12 +331,12 @@ app.get("/api/materials/:topicId", authenticateToken, async (req, res) => {
 });
 
 app.post("/api/materials", authenticateToken, async (req, res) => {
-  const { topic_id, type, title, content_url, quiz_data } = req.body;
+  const { topic_id, type, title, content_url, quiz_id } = req.body; // Added quiz_id
   try {
     const db = client.db(dbName);
     const materialsCollection = db.collection("system_study_materials");
-    const result = await materialsCollection.insertOne({ topic_id: new ObjectId(topic_id), type, title, content_url, quiz_data });
-    res.status(201).json({ _id: result.insertedId, topic_id, type, title, content_url, quiz_data });
+    const result = await materialsCollection.insertOne({ topic_id: new ObjectId(topic_id), type, title, content_url, quiz_id: quiz_id ? new ObjectId(quiz_id) : null });
+    res.status(201).json({ _id: result.insertedId, topic_id, type, title, content_url, quiz_id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -303,7 +422,9 @@ app.get("/api/recommendations/:studentId", authenticateToken, async (req, res) =
 
         const studentProgress = await progressCollection.find({ student_id: studentObjectId }).toArray();
         const completedTopicIds = studentProgress.filter(p => p.score >= 70).map(p => p.topic_id);
-        const strugglingTopics = studentProgress.filter(p => p.score < 70);
+        const strugglingTopics = studentProgress.filter(p => p.score < 70); // Topics where score is less than 70
+const unattemptedTopics = (await topicsCollection.find({ _id: { $nin: studentProgress.map(p => p.topic_id) } }).toArray());
+const allTopics = await topicsCollection.find({}).toArray();
 
         let recommendations = [];
 
@@ -312,14 +433,19 @@ app.get("/api/recommendations/:studentId", authenticateToken, async (req, res) =
           const topic = await topicsCollection.findOne({ _id: p.topic_id });
           if (!topic) continue;
 
-          let material = null;
-          // Try to find a material that matches the student\'s learning style
-          if (learningStyle === "visual") {
-            material = await materialsCollection.findOne({ topic_id: topic._id, type: "video" });
-          } else if (learningStyle === "auditory") {
-            material = await materialsCollection.findOne({ topic_id: topic._id, type: "video" }); // Videos can be auditory
-          } else if (learningStyle === "kinesthetic") {
-            material = await materialsCollection.findOne({ topic_id: topic._id, type: "quiz" });
+let material = null;
+          // Prioritize quizzes for struggling topics
+          material = await materialsCollection.findOne({ topic_id: topic._id, type: "quiz" });
+
+          // If no quiz, try to find a material that matches the student\'s learning style
+          if (!material) {
+            if (learningStyle === "visual") {
+              material = await materialsCollection.findOne({ topic_id: topic._id, type: "video" });
+            } else if (learningStyle === "auditory") {
+              material = await materialsCollection.findOne({ topic_id: topic._id, type: "video" });
+            } else if (learningStyle === "kinesthetic") {
+              material = await materialsCollection.findOne({ topic_id: topic._id, type: "pdf" }); // PDFs can be interactive for kinesthetic
+            }
           }
 
           // Fallback to any material if style-specific not found
@@ -338,17 +464,37 @@ app.get("/api/recommendations/:studentId", authenticateToken, async (req, res) =
 
         // 2. If fewer than 3 recommendations, suggest new unstarted topics
         if (recommendations.length < 3) {
-          const unstartedTopics = await topicsCollection.find({
-            _id: { $nin: completedTopicIds.concat(strugglingTopics.map(p => p.topic_id)) }
-          }).limit(3 - recommendations.length).toArray();
+          // Recommend unstarted topics, prioritizing those with quizzes
+          const topicsToConsider = unattemptedTopics.filter(t => !completedTopicIds.includes(t._id.toString()));
 
-          for (const topic of unstartedTopics) {
-            const material = await materialsCollection.findOne({ topic_id: topic._id });
+          for (const topic of topicsToConsider) {
+            if (recommendations.length >= 3) break;
+
+            let material = await materialsCollection.findOne({ topic_id: topic._id, type: "quiz" });
+            if (!material) {
+              material = await materialsCollection.findOne({ topic_id: topic._id });
+            }
+
             if (material) {
               recommendations.push({
                 topic: topic.name,
                 material: material,
                 reason: `Explore new topic: ${topic.name}`,
+              });
+            }
+          }
+        }
+
+        // Ensure diverse recommendations if still not enough
+        if (recommendations.length < 3) {
+          const allMaterials = await materialsCollection.find({}).limit(3 - recommendations.length).toArray();
+          for (const material of allMaterials) {
+            const topic = await topicsCollection.findOne({ _id: material.topic_id });
+            if (topic && !recommendations.some(r => r.topic === topic.name)) {
+              recommendations.push({
+                topic: topic.name,
+                material: material,
+                reason: `General recommendation: ${topic.name}`,
               });
             }
           }
