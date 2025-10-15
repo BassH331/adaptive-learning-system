@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: adaptive-learning-backend
+    env: node
+    buildCommand: pnpm install
+    startCommand: node server.js
+    healthCheckPath: /
+    healthCheckInterval: 300
+    healthCheckTimeout: 50
+    healthCheckFailureThreshold: 3
+    healthCheckSuccessThreshold: 1
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: DB_NAME
+        value: student_system
+      - key: JWT_SECRET
+        sync: false
+      - key: PORT
+        value: 10000 # Render.com assigns a dynamic port, but often uses 10000 internally
+
