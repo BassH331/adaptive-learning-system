@@ -32,6 +32,8 @@ function App() {
   // Quiz states
   const [showQuiz, setShowQuiz] = useState(false)
   const [currentQuiz, setCurrentQuiz] = useState(null)
+  const [currentQuizData, setCurrentQuizData] = useState(null) // To store fetched quiz questions
+  const [quizResult, setQuizResult] = useState(null) // To store quiz submission result
   const [quizAnswers, setQuizAnswers] = useState({})
   const [quizSubmitted, setQuizSubmitted] = useState(false)
   const [quizScore, setQuizScore] = useState(0)
@@ -139,14 +141,29 @@ function App() {
     localStorage.removeItem('user')
   }
 
-  const handleMaterialClick = (material) => {
-    if (material.type === 'quiz') {
-      setCurrentQuiz(material)
-      setShowQuiz(true)
-      setQuizAnswers({})
-      setQuizSubmitted(false)
-      setQuizScore(0)
-    } else {
+  const handleMaterialClick = async (material) => {
+    if (material.type === 'quiz' && material.quiz_id) {
+      try {
+        const res = await fetch(`${API_URL}/quizzes/${material.quiz_id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (res.ok) {
+          const quiz = await res.json()
+          setCurrentQuiz(material)
+          setCurrentQuizData(quiz)
+          setShowQuiz(true)
+          setQuizAnswers({})
+          setQuizSubmitted(false)
+          setQuizScore(0)
+          setQuizResult(null)
+        } else {
+          alert('Failed to fetch quiz data.')
+        }
+      } catch (err) {
+        console.error('Error fetching quiz:', err)
+        alert('Error fetching quiz.')
+      }
+    } else if (material.type !== 'quiz') {
       // Open video or PDF in new tab
       window.open(material.content_url, '_blank')
     }
@@ -160,42 +177,34 @@ function App() {
   }
 
   const handleQuizSubmit = async () => {
-    if (!currentQuiz || !currentQuiz.quiz_data) return
-    
-    let correct = 0
-    const questions = currentQuiz.quiz_data.questions
-    
-    questions.forEach((q, idx) => {
-      if (quizAnswers[idx] === q.correct) {
-        correct++
-      }
-    })
-    
-    const score = Math.round((correct / questions.length) * 100)
-    setQuizScore(score)
-    setQuizSubmitted(true)
-    
-    // Update progress on backend
+    if (!currentQuizData || !currentQuizData.questions) return
+
+    const answersToSend = currentQuizData.questions.map((q, idx) => {
+      const selectedOptionIndex = quizAnswers[idx];
+      return selectedOptionIndex !== undefined ? q.options[selectedOptionIndex] : null;
+    });
+
     try {
-      await fetch(`${API_URL}/progress`, {
+      const res = await fetch(`${API_URL}/quizzes/${currentQuizData._id}/submit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({
-          student_id: user.id.toString(),
-          topic_id: currentQuiz.topic_id,
-          score: score,
-          grade: score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F',
-          status: score >= 70 ? 'completed' : 'in_progress'
-        })
+        body: JSON.stringify({ answers: answersToSend })
       })
-      
-      // Refresh dashboard data
-      fetchDashboardData()
+      const data = await res.json()
+      if (res.ok) {
+        setQuizResult(data)
+        setQuizSubmitted(true)
+        setQuizScore(data.score)
+        fetchDashboardData() // Refresh dashboard to show updated progress, points, badges
+      } else {
+        alert(data.message)
+      }
     } catch (err) {
-      console.error('Error updating progress:', err)
+      console.error('Error submitting quiz:', err)
+      alert('Error submitting quiz.')
     }
   }
 
@@ -384,6 +393,44 @@ function App() {
               <h2 className="text-2xl font-bold text-gray-900 mb-2">Your Dashboard</h2>
               <p className="text-gray-600">Learning Style: <span className="font-semibold capitalize">{user?.learning_style}</span></p>
             </div>
+
+            {/* Gamification elements */}
+            {user && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Total Points</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-4xl font-bold text-indigo-600">{user.points || 0}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Badges Earned</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-2">
+                      {user.badges && user.badges.length > 0 ? (
+                        user.badges.map((badge, index) => (
+                          <span key={index} className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full">{badge}</span>
+                        ))
+                      ) : (
+                        <p className="text-sm text-gray-500">No badges yet</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Current Level</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-4xl font-bold text-purple-600">{user.current_level || 1}</p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card>
